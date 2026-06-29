@@ -451,7 +451,7 @@ function getFriendlyVoiceName(voice){
     if(nl.includes('여성') || nl.includes('female') ||
        nl.includes('yuna') || nl.includes('hana') || nl.includes('heami') ||
        nl.includes('여자') || nl.includes('한국의')){
-      return '여성 (Google)';
+      return '밝은 여성 (Google)';
     }
     // 남성 키워드
     if(nl.includes('남성') || nl.includes('male') ||
@@ -473,7 +473,7 @@ function getFriendlyVoiceName(voice){
       'seoyeon':'서연', 'hyunsu':'현수'
     };
     for(var key in msNames){
-      if(nl.includes(key)) return msNames[key] + ' (MS)';
+      if(nl.includes(key)) return '여성 (MS)';
     }
     // 한국 여성/남성 표기
     if(nl.includes('female') || nl.includes('여성')) return '여성 (MS)';
@@ -508,13 +508,7 @@ function loadVoices(){
   var sel = document.getElementById('voiceSelect');
   sel.innerHTML = '';
 
-  // ── 1순위: Google Translate 남성 (비공식, 키 불필요) ──
-  var optGM = document.createElement('option');
-  optGM.value = '__gtts_male__';
-  optGM.textContent = '남성 (Google)';
-  sel.appendChild(optGM);
-
-  // ── 브라우저 내장 한국어 목소리 ──
+  // ── 브라우저 내장 한국어 목소리 먼저 ──
   if(koVoices.length === 0){
     v.forEach(function(voice){
       var opt = document.createElement('option');
@@ -530,6 +524,12 @@ function loadVoices(){
       sel.appendChild(opt);
     });
   }
+
+  // ── 마지막: 차분한 여성 (pitch 낮춤) ──
+  var optGM = document.createElement('option');
+  optGM.value = '__gtts_male__';
+  optGM.textContent = '차분한 여성 (Google)';
+  sel.appendChild(optGM);
 
   // 저장된 선택값 복원
   var saved = localStorage.getItem('sori_voice');
@@ -562,52 +562,10 @@ document.addEventListener('DOMContentLoaded', function(){
   }
 });
 
-/* ── Google Translate TTS (남성, 비공식) ── */
-var gttsAudio = null;
-function speakGtts(text, vol, rate){
-  if(gttsAudio){ gttsAudio.pause(); gttsAudio = null; }
-  // 청크 분할 (200자 제한)
-  var chunks = [];
-  var words = text.split(' ');
-  var chunk = '';
-  words.forEach(function(w){
-    if((chunk + ' ' + w).length > 180 && chunk){ chunks.push(chunk.trim()); chunk = w; }
-    else chunk += (chunk ? ' ' : '') + w;
-  });
-  if(chunk) chunks.push(chunk.trim());
-
-  var board = document.getElementById('displayBoard');
-  board.classList.add('speaking');
-
-  function playChunk(idx){
-    if(idx >= chunks.length){ board.classList.remove('speaking'); return; }
-    var url = 'https://translate.google.com/translate_tts?ie=UTF-8&tl=ko&client=tw-ob&q='
-              + encodeURIComponent(chunks[idx]);
-    var a = new Audio(url);
-    a.volume = vol || 1.0;
-    // 속도 조절: playbackRate로 근사
-    a.playbackRate = rate || 1.0;
-    gttsAudio = a;
-    a.onended = function(){ playChunk(idx + 1); };
-    a.onerror = function(){
-      // CORS 막힌 경우 → Web Speech API 폴백
-      board.classList.remove('speaking');
-      showToast('⚠️ 구글 남성 목소리 연결 실패 → 기본 목소리로 재생');
-      speakWebSpeech(text);
-    };
-    a.play().catch(function(){
-      board.classList.remove('speaking');
-      showToast('⚠️ 구글 남성 목소리 연결 실패 → 기본 목소리로 재생');
-      speakWebSpeech(text);
-    });
-  }
-  playChunk(0);
-}
-
-/* ── Web Speech API TTS (기존) ── */
+/* ── Web Speech API TTS ── */
 function getVoice(){
   var v = synth.getVoices();
-  if(selectedVoiceURI){
+  if(selectedVoiceURI && selectedVoiceURI !== '__gtts_male__'){
     var found = v.find(function(x){ return x.voiceURI === selectedVoiceURI; });
     if(found) return found;
   }
@@ -615,11 +573,14 @@ function getVoice(){
          v.find(function(x){ return x.lang.startsWith('ko'); }) || null;
 }
 
-function speakWebSpeech(text){
+function speakWebSpeech(text, pitch){
   synth.cancel();
   setTimeout(function(){
     var u = new SpeechSynthesisUtterance(text);
-    u.lang = 'ko-KR'; u.rate = ttsRate; u.volume = ttsVol;
+    u.lang   = 'ko-KR';
+    u.rate   = ttsRate;
+    u.volume = ttsVol;
+    u.pitch  = (pitch !== undefined) ? pitch : 1.0;
     var v = getVoice(); if(v) u.voice = v;
     var board = document.getElementById('displayBoard');
     u.onstart = function(){ board.classList.add('speaking'); };
@@ -631,16 +592,14 @@ function speakWebSpeech(text){
 
 function speak(text){
   if(!text.trim()) return;
-  // 진행 중인 gtts 중단
-  if(gttsAudio){ gttsAudio.pause(); gttsAudio = null; }
   synth.cancel();
   currentText = text.trim();
   updateBoard(currentText);
-
+  // 차분한 여성(Google) 선택 시 pitch 낮춰 차분한 느낌 연출
   if(selectedVoiceURI === '__gtts_male__'){
-    speakGtts(currentText, ttsVol, ttsRate);
+    speakWebSpeech(currentText, 0.6);
   } else {
-    speakWebSpeech(currentText);
+    speakWebSpeech(currentText, 1.0);
   }
 }
 function reSpeak(){ if(currentText) speak(currentText); }
