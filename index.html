@@ -42,6 +42,66 @@ body{
 .ctrl-item label{white-space:nowrap;font-weight:600;}
 .ctrl-item input[type=range]{width:80px;accent-color:var(--accent);cursor:pointer;}
 .ctrl-val{font-size:11px;color:var(--accent);font-weight:700;min-width:38px;}
+.ctrl-item select{
+  font-family:inherit; font-size:12px; font-weight:600;
+  padding:3px 6px; border:1px solid var(--border);
+  border-radius:7px; background:var(--surface); color:var(--text);
+  cursor:pointer; outline:none; max-width:130px;
+}
+.ctrl-item select:focus{border-color:var(--accent);}
+
+/* 단축키 뱃지 */
+.shortcut-badge{
+  display:inline-flex; align-items:center; justify-content:center;
+  min-width:22px; height:20px; padding:0 5px;
+  border-radius:5px; font-size:10px; font-weight:800;
+  background:var(--accent); color:#fff;
+  flex-shrink:0; cursor:default; letter-spacing:0.3px;
+  user-select:none;
+}
+.shortcut-badge.unset{
+  background:var(--border); color:var(--text-muted);
+  border:1px dashed var(--text-muted);
+  cursor:pointer; font-size:9px;
+}
+.shortcut-badge.unset:hover{
+  background:var(--accent-dim); border-color:var(--accent); color:var(--accent);
+}
+
+/* 단축키 지정 팝업 */
+.shortcut-popup{
+  position:fixed; top:50%; left:50%;
+  transform:translate(-50%,-50%);
+  background:var(--surface); border:2px solid var(--accent);
+  border-radius:16px; padding:22px 28px; z-index:1000;
+  box-shadow:0 8px 40px rgba(79,110,247,.25);
+  text-align:center; min-width:260px;
+}
+.shortcut-popup h3{font-size:16px;font-weight:800;color:var(--text);margin-bottom:8px;}
+.shortcut-popup p{font-size:13px;color:var(--text-sub);line-height:1.6;margin-bottom:16px;}
+.shortcut-popup .key-display{
+  font-size:28px; font-weight:900; color:var(--accent);
+  background:var(--accent-dim); border-radius:10px;
+  padding:10px 20px; margin-bottom:16px; display:block;
+  letter-spacing:2px;
+}
+.shortcut-popup .popup-btns{display:flex;gap:8px;justify-content:center;}
+.shortcut-popup .popup-btn{
+  padding:7px 18px; border-radius:9px; font-family:inherit;
+  font-size:13px; font-weight:600; cursor:pointer; border:none;
+  transition:all .15s;
+}
+.shortcut-popup .popup-btn.cancel{
+  background:var(--surface2); color:var(--text-sub); border:1px solid var(--border);
+}
+.shortcut-popup .popup-btn.cancel:hover{background:var(--border);}
+.shortcut-popup .popup-btn.del{
+  background:#FEE2E2; color:var(--danger);
+}
+.shortcut-popup .popup-btn.del:hover{background:var(--danger);color:#fff;}
+.shortcut-overlay{
+  position:fixed; inset:0; background:rgba(0,0,0,.35); z-index:999;
+}
 
 /* ── 툴바 ── */
 .toolbar{
@@ -281,6 +341,12 @@ body{
   <div class="spacer"></div>
   <div class="controls-inline">
     <div class="ctrl-item">
+      <label>🎙️ 목소리</label>
+      <select id="voiceSelect" title="목소리 선택">
+        <option value="">불러오는 중...</option>
+      </select>
+    </div>
+    <div class="ctrl-item">
       <label>🐢 속도</label>
       <input type="range" id="rateSlider" min="0.5" max="1.5" step="0.1" value="1.0">
       <span class="ctrl-val" id="rateVal">보통</span>
@@ -372,29 +438,212 @@ body{
 ══════════════════════════ */
 var synth = window.speechSynthesis;
 var currentText = '', ttsRate = 1.0, ttsVol = 1.0;
+var selectedVoiceURI = '';  // 선택된 목소리 URI
 
-function getVoice(){
-  var v=synth.getVoices();
-  return v.find(function(x){return x.lang==='ko-KR';})||v.find(function(x){return x.lang.startsWith('ko');})||null;
+/* 목소리 이름을 사람이 읽기 좋게 변환 */
+function getFriendlyVoiceName(voice){
+  var n = voice.name;
+  var nl = n.toLowerCase();
+
+  // ── Google 목소리 ──
+  if(nl.includes('google')){
+    // 여성 키워드
+    if(nl.includes('여성') || nl.includes('female') ||
+       nl.includes('yuna') || nl.includes('hana') || nl.includes('heami') ||
+       nl.includes('여자') || nl.includes('한국의')){
+      return '여성 (Google)';
+    }
+    // 남성 키워드
+    if(nl.includes('남성') || nl.includes('male') ||
+       nl.includes('junho') || nl.includes('minho') ||
+       nl.includes('남자')){
+      return '남성 (Google)';
+    }
+    // 키워드 불명 → 그냥 Google
+    return 'Google 한국어';
+  }
+
+  // ── Microsoft 목소리 ──
+  if(nl.includes('microsoft') || nl.includes('ms ')){
+    // 이름에 포함된 한국 이름 추출
+    var msNames = {
+      'heami':'혜미', 'heami':'혜미',
+      'junho':'준호', 'jinho':'진호', 'minho':'민호',
+      'yuna':'유나',  'sunhi':'선희', 'naayeon':'나연',
+      'seoyeon':'서연', 'hyunsu':'현수'
+    };
+    for(var key in msNames){
+      if(nl.includes(key)) return msNames[key] + ' (MS)';
+    }
+    // 한국 여성/남성 표기
+    if(nl.includes('female') || nl.includes('여성')) return '여성 (MS)';
+    if(nl.includes('male')   || nl.includes('남성')) return '남성 (MS)';
+    // 이름에서 MS 제거하고 추출: "Microsoft Heami - Korean (Korean)" → "Heami"
+    var clean = n.replace(/Microsoft\s*/i,'').replace(/\s*-.*$/,'').trim();
+    return clean ? clean + ' (MS)' : 'MS 한국어';
+  }
+
+  // ── Apple / Siri 목소리 ──
+  if(nl.includes('siri') || nl.includes('apple')){
+    if(nl.includes('여성') || nl.includes('female')) return '여성 (Apple)';
+    if(nl.includes('남성') || nl.includes('male'))   return '남성 (Apple)';
+    return 'Apple 한국어';
+  }
+
+  // ── 기타: 원본 이름 그대로 ──
+  return n;
 }
-if(synth.onvoiceschanged!==undefined) synth.onvoiceschanged=function(){};
+
+/* 목소리 목록 로드 및 드롭다운 구성 */
+function loadVoices(){
+  var v = synth.getVoices();
+  var koVoices = v.filter(function(x){ return x.lang.startsWith('ko'); });
+  // 구글 목소리 우선, 그 다음 기타 한국어
+  koVoices.sort(function(a,b){
+    var aG = a.name.toLowerCase().includes('google') ? 0 : 1;
+    var bG = b.name.toLowerCase().includes('google') ? 0 : 1;
+    return aG - bG;
+  });
+
+  var sel = document.getElementById('voiceSelect');
+  sel.innerHTML = '';
+
+  // ── 1순위: Google Translate 남성 (비공식, 키 불필요) ──
+  var optGM = document.createElement('option');
+  optGM.value = '__gtts_male__';
+  optGM.textContent = '남성 (Google)';
+  sel.appendChild(optGM);
+
+  // ── 브라우저 내장 한국어 목소리 ──
+  if(koVoices.length === 0){
+    v.forEach(function(voice){
+      var opt = document.createElement('option');
+      opt.value = voice.voiceURI;
+      opt.textContent = voice.name + ' (' + voice.lang + ')';
+      sel.appendChild(opt);
+    });
+  } else {
+    koVoices.forEach(function(voice){
+      var opt = document.createElement('option');
+      opt.value = voice.voiceURI;
+      opt.textContent = getFriendlyVoiceName(voice);
+      sel.appendChild(opt);
+    });
+  }
+
+  // 저장된 선택값 복원
+  var saved = localStorage.getItem('sori_voice');
+  if(saved){
+    var found = false;
+    for(var i=0; i<sel.options.length; i++){
+      if(sel.options[i].value === saved){ sel.selectedIndex = i; found = true; break; }
+    }
+    if(found) selectedVoiceURI = saved;
+  }
+  if(!selectedVoiceURI && sel.options.length > 0){
+    selectedVoiceURI = sel.options[0].value;
+  }
+}
+
+if(synth.onvoiceschanged !== undefined){
+  synth.onvoiceschanged = loadVoices;
+}
+// Chrome은 약간 지연 후 로드되므로 즉시 + 지연 양쪽 호출
+loadVoices();
+setTimeout(loadVoices, 300);
+
+document.addEventListener('DOMContentLoaded', function(){
+  var sel = document.getElementById('voiceSelect');
+  if(sel){
+    sel.addEventListener('change', function(){
+      selectedVoiceURI = this.value;
+      localStorage.setItem('sori_voice', selectedVoiceURI);
+    });
+  }
+});
+
+/* ── Google Translate TTS (남성, 비공식) ── */
+var gttsAudio = null;
+function speakGtts(text, vol, rate){
+  if(gttsAudio){ gttsAudio.pause(); gttsAudio = null; }
+  // 청크 분할 (200자 제한)
+  var chunks = [];
+  var words = text.split(' ');
+  var chunk = '';
+  words.forEach(function(w){
+    if((chunk + ' ' + w).length > 180 && chunk){ chunks.push(chunk.trim()); chunk = w; }
+    else chunk += (chunk ? ' ' : '') + w;
+  });
+  if(chunk) chunks.push(chunk.trim());
+
+  var board = document.getElementById('displayBoard');
+  board.classList.add('speaking');
+
+  function playChunk(idx){
+    if(idx >= chunks.length){ board.classList.remove('speaking'); return; }
+    var url = 'https://translate.google.com/translate_tts?ie=UTF-8&tl=ko&client=tw-ob&q='
+              + encodeURIComponent(chunks[idx]);
+    var a = new Audio(url);
+    a.volume = vol || 1.0;
+    // 속도 조절: playbackRate로 근사
+    a.playbackRate = rate || 1.0;
+    gttsAudio = a;
+    a.onended = function(){ playChunk(idx + 1); };
+    a.onerror = function(){
+      // CORS 막힌 경우 → Web Speech API 폴백
+      board.classList.remove('speaking');
+      showToast('⚠️ 구글 남성 목소리 연결 실패 → 기본 목소리로 재생');
+      speakWebSpeech(text);
+    };
+    a.play().catch(function(){
+      board.classList.remove('speaking');
+      showToast('⚠️ 구글 남성 목소리 연결 실패 → 기본 목소리로 재생');
+      speakWebSpeech(text);
+    });
+  }
+  playChunk(0);
+}
+
+/* ── Web Speech API TTS (기존) ── */
+function getVoice(){
+  var v = synth.getVoices();
+  if(selectedVoiceURI){
+    var found = v.find(function(x){ return x.voiceURI === selectedVoiceURI; });
+    if(found) return found;
+  }
+  return v.find(function(x){ return x.lang==='ko-KR'; }) ||
+         v.find(function(x){ return x.lang.startsWith('ko'); }) || null;
+}
+
+function speakWebSpeech(text){
+  synth.cancel();
+  setTimeout(function(){
+    var u = new SpeechSynthesisUtterance(text);
+    u.lang = 'ko-KR'; u.rate = ttsRate; u.volume = ttsVol;
+    var v = getVoice(); if(v) u.voice = v;
+    var board = document.getElementById('displayBoard');
+    u.onstart = function(){ board.classList.add('speaking'); };
+    u.onend   = function(){ board.classList.remove('speaking'); };
+    u.onerror = function(){ board.classList.remove('speaking'); };
+    synth.speak(u);
+  }, 80);
+}
 
 function speak(text){
   if(!text.trim()) return;
+  // 진행 중인 gtts 중단
+  if(gttsAudio){ gttsAudio.pause(); gttsAudio = null; }
   synth.cancel();
-  currentText=text.trim();
+  currentText = text.trim();
   updateBoard(currentText);
-  setTimeout(function(){
-    var u=new SpeechSynthesisUtterance(currentText);
-    u.lang='ko-KR'; u.rate=ttsRate; u.volume=ttsVol;
-    var v=getVoice(); if(v) u.voice=v;
-    u.onstart=function(){document.getElementById('displayBoard').classList.add('speaking');};
-    u.onend=function(){document.getElementById('displayBoard').classList.remove('speaking');};
-    u.onerror=function(){document.getElementById('displayBoard').classList.remove('speaking');};
-    synth.speak(u);
-  },80);
+
+  if(selectedVoiceURI === '__gtts_male__'){
+    speakGtts(currentText, ttsVol, ttsRate);
+  } else {
+    speakWebSpeech(currentText);
+  }
 }
-function reSpeak(){if(currentText) speak(currentText);}
+function reSpeak(){ if(currentText) speak(currentText); }
 
 function updateBoard(text){
   var el=document.getElementById('boardText');
@@ -660,97 +909,206 @@ document.getElementById('swResetBtn').addEventListener('click',function(){
 });
 
 /* ══════════════════════════
-   즐겨찾기
+   즐겨찾기 + 단축키
 ══════════════════════════ */
-var favorites=JSON.parse(localStorage.getItem('sori_favs')||'[]');
+// favorites: [{text:'..', shortcut: null or 1~9}]
+var rawFavs = localStorage.getItem('sori_favs2') || localStorage.getItem('sori_favs') || '[]';
+var parsedRaw = JSON.parse(rawFavs);
+
+// 구버전(문자열 배열) → 새 형식 마이그레이션
+var favorites;
+if(Array.isArray(parsedRaw) && parsedRaw.length > 0 && typeof parsedRaw[0] === 'string'){
+  favorites = parsedRaw.map(function(t){ return {text: t, shortcut: null}; });
+} else if(Array.isArray(parsedRaw) && parsedRaw.length > 0 && typeof parsedRaw[0] === 'object'){
+  favorites = parsedRaw;
+} else {
+  favorites = [];
+}
+
 var defaultFavs=[
   "조용히 하세요.","교과서 펴세요.","연필 내려놓으세요.",
   "앞을 봐주세요.","짝과 이야기해 보세요.",
   "발표할 사람 손 들어보세요.","30초 안에 정리하세요.",
   "선생님 화면을 봐 주세요.","자리에 앉으세요.","숙제 꺼내세요."
 ];
-if(favorites.length===0){favorites=defaultFavs.slice();saveToStorage();}
+if(favorites.length===0){
+  favorites = defaultFavs.map(function(t){ return {text:t, shortcut:null}; });
+  saveToStorage();
+}
 
-function saveToStorage(){localStorage.setItem('sori_favs',JSON.stringify(favorites));}
+function saveToStorage(){
+  localStorage.setItem('sori_favs2', JSON.stringify(favorites));
+  // 구버전 키도 동기화 (호환성)
+  localStorage.setItem('sori_favs', JSON.stringify(favorites.map(function(f){ return f.text; })));
+}
 function saveFavorite(){
-  var text=textarea.value.trim()||currentText;
-  if(!text){showToast('먼저 문장을 입력해주세요!');return;}
-  if(favorites.includes(text)){showToast('이미 저장된 문장이에요 ⭐');return;}
-  favorites.unshift(text); saveToStorage(); renderFavorites();
+  var text = textarea.value.trim() || currentText;
+  if(!text){ showToast('먼저 문장을 입력해주세요!'); return; }
+  if(favorites.find(function(f){ return f.text===text; })){ showToast('이미 저장된 문장이에요 ⭐'); return; }
+  favorites.unshift({text:text, shortcut:null});
+  saveToStorage(); renderFavorites();
   showToast('즐겨찾기에 저장했어요 ⭐');
 }
+
+/* ── 단축키 팝업 ── */
+var shortcutTarget = null; // 단축키 지정 대상 인덱스
+
+function openShortcutPopup(i){
+  shortcutTarget = i;
+  var f = favorites[i];
+  var currentKey = f.shortcut ? 'Ctrl + ' + f.shortcut : '없음';
+
+  // 오버레이
+  var overlay = document.createElement('div');
+  overlay.className = 'shortcut-overlay';
+  overlay.id = 'scOverlay';
+  document.body.appendChild(overlay);
+
+  // 팝업
+  var popup = document.createElement('div');
+  popup.className = 'shortcut-popup';
+  popup.id = 'scPopup';
+  popup.innerHTML =
+    '<h3>⌨️ 단축키 지정</h3>' +
+    '<p>"' + escHtml(f.text.length > 20 ? f.text.slice(0,20)+'…' : f.text) + '"<br>' +
+    '현재: <strong>' + currentKey + '</strong></p>' +
+    '<span class="key-display" id="scKeyDisplay">Ctrl + ?</span>' +
+    '<p style="font-size:12px;color:var(--text-muted);margin-bottom:14px;">키보드에서 숫자 1~9를 눌러 단축키 지정</p>' +
+    '<div class="popup-btns">' +
+      '<button class="popup-btn cancel" id="scCancel">취소</button>' +
+      (f.shortcut ? '<button class="popup-btn del" id="scDel">단축키 해제</button>' : '') +
+    '</div>';
+  document.body.appendChild(popup);
+
+  // 키 입력 감지
+  function onKey(e){
+    var num = parseInt(e.key);
+    if(num >= 1 && num <= 9){
+      e.preventDefault();
+      assignShortcut(i, num);
+      closeShortcutPopup();
+    }
+    if(e.key === 'Escape') closeShortcutPopup();
+  }
+  document.addEventListener('keydown', onKey);
+  popup._removeKey = function(){ document.removeEventListener('keydown', onKey); };
+
+  // 미리보기
+  document.getElementById('scKeyDisplay').textContent = 'Ctrl + ?';
+
+  document.getElementById('scCancel').addEventListener('click', closeShortcutPopup);
+  var delBtn = document.getElementById('scDel');
+  if(delBtn) delBtn.addEventListener('click', function(){
+    assignShortcut(i, null);
+    closeShortcutPopup();
+  });
+  overlay.addEventListener('click', closeShortcutPopup);
+}
+
+function closeShortcutPopup(){
+  var popup = document.getElementById('scPopup');
+  var overlay = document.getElementById('scOverlay');
+  if(popup){ if(popup._removeKey) popup._removeKey(); popup.remove(); }
+  if(overlay) overlay.remove();
+}
+
+function assignShortcut(i, num){
+  // 기존에 같은 번호 사용 중인 항목 해제
+  if(num !== null){
+    favorites.forEach(function(f, idx){ if(f.shortcut === num && idx !== i) f.shortcut = null; });
+  }
+  favorites[i].shortcut = num;
+  saveToStorage();
+  renderFavorites();
+  if(num) showToast('⌨️ Ctrl+' + num + ' 단축키 지정 완료!');
+  else showToast('단축키를 해제했어요');
+}
+
+/* ── 렌더링 ── */
 function renderFavorites(){
-  var list=document.getElementById('favList');
-  document.getElementById('favCount').textContent=favorites.length;
-  if(favorites.length===0){
+  var list = document.getElementById('favList');
+  document.getElementById('favCount').textContent = favorites.length;
+  if(favorites.length === 0){
     list.innerHTML='<div class="fav-empty">자주 쓰는 문장을<br>저장해두세요 👆</div>'; return;
   }
-  list.innerHTML='';
-  favorites.forEach(function(text,i){
-    var item=document.createElement('div');
-    item.className='fav-item';
-    item.dataset.idx=i;
+  list.innerHTML = '';
+  favorites.forEach(function(fav, i){
+    var item = document.createElement('div');
+    item.className = 'fav-item';
+    item.dataset.idx = i;
 
-    // 일반 보기 모드
-    function renderView(){
-      item.innerHTML=
-        '<button class="fav-play-btn" onclick="speakFav('+i+')" title="탭해서 읽기">🔊</button>'+
-        '<div class="fav-text">'+escHtml(favorites[i])+'</div>'+
-        '<div class="fav-actions">'+
-          '<button class="btn-icon" title="편집" onclick="editFav('+i+')">✏️</button>'+
-          '<button class="btn-icon del" title="삭제" onclick="delFav('+i+')">🗑️</button>'+
-        '</div>';
-    }
+    var scLabel = fav.shortcut
+      ? '<span class="shortcut-badge" title="단축키: Ctrl+' + fav.shortcut + '" onclick="openShortcutPopup('+i+')" style="cursor:pointer">⌨'+fav.shortcut+'</span>'
+      : '<span class="shortcut-badge unset" title="단축키 지정하기" onclick="openShortcutPopup('+i+')">+키</span>';
 
-    renderView();
+    item.innerHTML =
+      '<button class="fav-play-btn" onclick="speakFav('+i+')" title="탭해서 읽기">🔊</button>'+
+      scLabel +
+      '<div class="fav-text">'+escHtml(fav.text)+'</div>'+
+      '<div class="fav-actions">'+
+        '<button class="btn-icon" title="편집" onclick="editFav('+i+')">✏️</button>'+
+        '<button class="btn-icon del" title="삭제" onclick="delFav('+i+')">🗑️</button>'+
+      '</div>';
+
     list.appendChild(item);
   });
 }
 
 function editFav(i){
-  // 해당 아이템을 편집 모드로 전환
-  var item=document.querySelector('.fav-item[data-idx="'+i+'"]');
+  var item = document.querySelector('.fav-item[data-idx="'+i+'"]');
   if(!item) return;
-  var curText=favorites[i];
-  item.innerHTML=
+  var curText = favorites[i].text;
+  item.innerHTML =
     '<input class="fav-edit-input" type="text" value="'+escHtml(curText)+'" />'+
     '<div class="fav-actions">'+
       '<button class="btn-icon save-btn" title="저장">✅</button>'+
       '<button class="btn-icon" title="취소">✖️</button>'+
     '</div>';
 
-  var input=item.querySelector('.fav-edit-input');
-  var btns=item.querySelectorAll('.btn-icon');
+  var input = item.querySelector('.fav-edit-input');
+  var btns  = item.querySelectorAll('.btn-icon');
 
-  // 저장
   function doSave(){
-    var newText=input.value.trim();
-    if(!newText){showToast('내용을 입력해주세요!');return;}
-    favorites[i]=newText;
-    saveToStorage();
-    renderFavorites();
+    var newText = input.value.trim();
+    if(!newText){ showToast('내용을 입력해주세요!'); return; }
+    favorites[i].text = newText;
+    saveToStorage(); renderFavorites();
     showToast('수정했어요 ✅');
   }
-
-  // 저장 버튼
   btns[0].addEventListener('click', doSave);
-  // 취소 버튼
   btns[1].addEventListener('click', function(){ renderFavorites(); });
-  // Enter = 저장, Esc = 취소
   input.addEventListener('keydown', function(e){
     if(e.key==='Enter'){ e.preventDefault(); doSave(); }
     if(e.key==='Escape'){ renderFavorites(); }
   });
-
-  // 포커스
-  input.focus();
-  input.select();
+  input.focus(); input.select();
 }
 
-function speakFav(i){speak(favorites[i]);}
-function loadFav(i){textarea.value=favorites[i];textarea.focus();showToast('입력창에 불러왔어요 ✏️');}
-function delFav(i){favorites.splice(i,1);saveToStorage();renderFavorites();showToast('삭제했어요');}
-function escHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function speakFav(i){ speak(favorites[i].text); }
+function loadFav(i){ textarea.value = favorites[i].text; textarea.focus(); showToast('입력창에 불러왔어요 ✏️'); }
+function delFav(i){ favorites.splice(i,1); saveToStorage(); renderFavorites(); showToast('삭제했어요'); }
+function escHtml(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+/* ── 글로벌 단축키 (Ctrl+1~9) ── */
+document.addEventListener('keydown', function(e){
+  // 입력 필드 안에서는 무시
+  var tag = document.activeElement.tagName;
+  if(tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  // 팝업 열려 있으면 무시
+  if(document.getElementById('scPopup')) return;
+
+  if(e.ctrlKey && !e.shiftKey && !e.altKey){
+    var num = parseInt(e.key);
+    if(num >= 1 && num <= 9){
+      var fav = favorites.find(function(f){ return f.shortcut === num; });
+      if(fav){
+        e.preventDefault();
+        speak(fav.text);
+        showToast('⌨️ Ctrl+' + num + ' — ' + (fav.text.length > 15 ? fav.text.slice(0,15)+'…' : fav.text));
+      }
+    }
+  }
+});
 
 /* 토스트 */
 var toastTimer=null;
